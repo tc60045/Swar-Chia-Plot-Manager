@@ -1,4 +1,11 @@
-# Swar's Chia Plot Manager 
+Modified version of Swar Chia Plot Manager to accomodate xChiax, the open exchange for Chia plotters and buyers.
+
+Modifications include:
+- bid management tools for xChiax
+- Coinbase payment accounts for plotters
+- rtorrent / ruTorrent for distributing plots effeciently and effectively
+- configurable waiting to win plot jobs
+- xChiax account for registered users
 
 #### A plot manager for Chia plotting: https://www.chia.net/
 [English](README.md) / [Русский](README.RU.md)
