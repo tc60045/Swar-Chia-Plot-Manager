@@ -1,204 +1,114 @@
-import dateparser
 import logging
-import os
-import psutil
-import re
-import socket
+import time
 
-from plotmanager.library.utilities.instrumentation import increment_plots_completed
-from plotmanager.library.utilities.notifications import send_notifications
-from plotmanager.library.utilities.print import pretty_print_time
+from datetime import datetime, timedelta
 
-
-def get_log_file_name(log_directory, job, datetime):
-    return os.path.join(log_directory, f'{job.name}_{str(datetime).replace(" ", "_").replace(":", "_").replace(".", "_")}.log')
+from plotmanager.library.parse.configuration import get_config_info
+from plotmanager.library.utilities.jobs import has_active_jobs_and_work, load_jobs, monitor_jobs_to_start
+from plotmanager.library.utilities.log import check_log_progress
+from plotmanager.library.utilities.processes import get_running_plots, get_system_drives
 
 
-def _analyze_log_end_date(contents):
-    match = re.search(r'total time = ([\d\.]+) seconds\. CPU \([\d\.]+%\) [A-Za-z]+\s([^\n]+)\n', contents, flags=re.I)
-    if not match:
-        return False
-    total_seconds, date_raw = match.groups()
-    total_seconds = pretty_print_time(int(float(total_seconds)))
-    parsed_date = dateparser.parse(date_raw)
-    return dict(
-        total_seconds=total_seconds,
-        date=parsed_date,
+chia_location, log_directory, config_jobs, manager_check_interval, max_concurrent, max_for_phase_1, \
+    minimum_minutes_between_jobs, progress_settings, notification_settings, debug_level, view_settings, \
+    instrumentation_settings, drive_mounts = get_config_info()   # 
+
+logging.basicConfig(format='%(asctime)s [%(levelname)s]: %(message)s', datefmt='%Y-%m-%d %H:%M:%S', level=debug_level)
+
+logging.info(f'Debug Level: {debug_level}')
+logging.info(f'Chia Location: {chia_location}')
+logging.info(f'Log Directory: {log_directory}')
+logging.info(f'Jobs: {config_jobs}')
+logging.info(f'Manager Check Interval: {manager_check_interval}')
+logging.info(f'Max Concurrent: {max_concurrent}')
+logging.info(f'Max for Phase 1: {max_for_phase_1}')
+logging.info(f'Minimum Minutes between Jobs: {minimum_minutes_between_jobs}')
+logging.info(f'Progress Settings: {progress_settings}')
+logging.info(f'Notification Settings: {notification_settings}')
+logging.info(f'View Settings: {view_settings}')
+logging.info(f'Instrumentation Settings: {instrumentation_settings}')
+
+logging.info(f'Loading jobs into objects.')
+jobs = load_jobs(config_jobs)
+
+next_log_check = datetime.now()
+next_job_work = {}
+running_work = {}
+assigned_mounts = [] # I am going to have to tweak this for the string that comes back
+# also - need to deal with rsync for house jobs
+
+
+logging.info(f'Grabbing system drives.')
+system_drives = get_system_drives()
+logging.info(f"Found System Drives: {system_drives}")
+
+logging.info(f'Grabbing running plots.')
+jobs, running_work = get_running_plots(jobs=jobs, running_work=running_work,
+                                       instrumentation_settings=instrumentation_settings)
+for job in jobs:
+    next_job_work[job.name] = datetime.now()
+    max_date = None
+    for pid in job.running_work:
+        work = running_work[pid]
+        start = work.datetime_start
+        if not max_date or start > max_date:
+            max_date = start
+    initial_delay_date = datetime.now() + timedelta(minutes=job.initial_delay_minutes)
+    if job.initial_delay_minutes:
+        next_job_work[job.name] = initial_delay_date
+    if not max_date:
+        continue
+    max_date = max_date + timedelta(minutes=job.stagger_minutes)
+    if job.initial_delay_minutes and initial_delay_date > max_date:
+        logging.info(f'{job.name} Found. Setting initial dalay date to {next_job_work[job.name]} which is '
+                     f'{job.initial_delay_minutes} minutes.')
+        continue
+    next_job_work[job.name] = max_date
+    logging.info(f'{job.name} Found. Setting next stagger date to {next_job_work[job.name]}')
+
+if minimum_minutes_between_jobs and len(running_work.keys()) > 0:
+    logging.info(f'Checking to see if stagger needs to be altered due to minimum_minutes_between_jobs. '
+                 f'Value: {minimum_minutes_between_jobs}')
+    maximum_start_date = max([work.datetime_start for work in running_work.values()])
+    minimum_stagger = maximum_start_date + timedelta(minutes=minimum_minutes_between_jobs)
+    logging.info(f'All dates: {[work.datetime_start for work in running_work.values()]}')
+    logging.info(f'Calculated Latest Job Start Date: {maximum_start_date}')
+    logging.info(f'Calculated Minimum Stagger: {minimum_stagger}')
+    for job_name in next_job_work:
+        if next_job_work[job_name] > minimum_stagger:
+            logging.info(f'Skipping stagger for {job_name}. Stagger is larger than minimum_minutes_between_jobs. '
+                         f'Minimum: {minimum_stagger}, Current: {next_job_work[job_name]}')
+            continue
+        next_job_work[job_name] = minimum_stagger
+        logging.info(f'Setting a new stagger for {job_name}. minimum_minutes_between_jobs is larger than assigned '
+                     f'stagger. Minimum: {minimum_stagger}, Current: {next_job_work[job_name]}')
+
+logging.info(f'Starting loop.')
+while has_active_jobs_and_work(jobs):
+    # CHECK LOGS FOR DELETED WORK
+    logging.info(f'Checking log progress..')
+    check_log_progress(jobs=jobs, running_work=running_work, progress_settings=progress_settings,
+                       notification_settings=notification_settings, view_settings=view_settings,
+                       instrumentation_settings=instrumentation_settings, assigned_mounts = assigned_mounts,
+                       drive_mounts = drive_mounts)
+    next_log_check = datetime.now() + timedelta(seconds=manager_check_interval)  #good to know
+
+    # DETERMINE IF JOB NEEDS TO START
+    logging.info(f'Monitoring jobs to start.')
+    jobs, running_work, next_job_work, next_log_check = monitor_jobs_to_start(
+        jobs=jobs,
+        running_work=running_work,
+        max_concurrent=max_concurrent,
+        max_for_phase_1=max_for_phase_1,
+        next_job_work=next_job_work,
+        chia_location=chia_location,
+        log_directory=log_directory,
+        next_log_check=next_log_check,
+        minimum_minutes_between_jobs=minimum_minutes_between_jobs,
+        system_drives=system_drives,
     )
 
+    logging.info(f'Sleeping for {manager_check_interval} seconds.')
+    time.sleep(manager_check_interval)
 
-def _get_date_summary(analysis):
-    summary = analysis.get('summary', {})
-    for file_path in analysis['files'].keys():
-        if analysis['files'][file_path]['checked']:
-            continue
-        analysis['files'][file_path]['checked'] = True
-        end_date = analysis['files'][file_path]['data']['date'].date()
-        if end_date not in summary:
-            summary[end_date] = 0
-        summary[end_date] += 1
-    analysis['summary'] = summary
-    return analysis
-
-
-def _get_regex(pattern, string, flags=re.I):
-    return re.search(pattern, string, flags=flags).groups()
-
-
-def get_completed_log_files(log_directory, skip=None):
-    if not skip:
-        skip = []
-    files = {}
-    for file in os.listdir(log_directory):
-        if file[-4:] not in ['.log', '.txt']:
-            continue
-        file_path = os.path.join(log_directory, file)
-        if file_path in skip:
-            continue
-        f = open(file_path, 'r')
-        try:
-            contents = f.read()
-        except UnicodeDecodeError:
-            continue
-        f.close()
-        if 'Total time = ' not in contents:
-            continue
-        files[file_path] = contents
-    return files
-
-
-def analyze_log_dates(log_directory, analysis):
-    files = get_completed_log_files(log_directory, skip=list(analysis['files'].keys()))
-    for file_path, contents in files.items():
-        data = _analyze_log_end_date(contents)
-        if data is None:
-            continue
-        analysis['files'][file_path] = {'data': data, 'checked': False}
-    analysis = _get_date_summary(analysis)
-    return analysis
-
-
-def analyze_log_times(log_directory):
-    total_times = {1: 0, 2: 0, 3: 0, 4: 0}
-    line_numbers = {1: [], 2: [], 3: [], 4: []}
-    count = 0
-    files = get_completed_log_files(log_directory)
-    for file_path, contents in files.items():
-        count += 1
-        phase_times, phase_dates = get_phase_info(contents, pretty_print=False)
-        for phase, seconds in phase_times.items():
-            total_times[phase] += seconds
-        splits = contents.split('Time for phase')
-        phase = 0
-        new_lines = 1
-        for split in splits:
-            phase += 1
-            if phase >= 5:
-                break
-            new_lines += split.count('\n')
-            line_numbers[phase].append(new_lines)
-
-    for phase in range(1, 5):
-        print(f'  phase{phase}_line_end: {int(round(sum(line_numbers[phase]) / len(line_numbers[phase]), 0))}')
-
-    for phase in range(1, 5):
-        print(f'  phase{phase}_weight: {round(total_times[phase] / sum(total_times.values()) * 100, 2)}')
-
-
-def get_phase_info(contents, view_settings=None, pretty_print=True):
-    if not view_settings:
-        view_settings = {}
-    phase_times = {}
-    phase_dates = {}
-
-    for phase in range(1, 5):
-        match = re.search(rf'time for phase {phase} = ([\d\.]+) seconds\. CPU \([\d\.]+%\) [A-Za-z]+\s([^\n]+)\n', contents, flags=re.I)
-        if match:
-            seconds, date_raw = match.groups()
-            seconds = float(seconds)
-            phase_times[phase] = pretty_print_time(int(seconds), view_settings['include_seconds_for_phase']) if pretty_print else seconds
-            parsed_date = dateparser.parse(date_raw)
-            phase_dates[phase] = parsed_date
-
-    return phase_times, phase_dates
-
-
-def get_progress(line_count, progress_settings):
-    phase1_line_end = progress_settings['phase1_line_end']
-    phase2_line_end = progress_settings['phase2_line_end']
-    phase3_line_end = progress_settings['phase3_line_end']
-    phase4_line_end = progress_settings['phase4_line_end']
-    phase1_weight = progress_settings['phase1_weight']
-    phase2_weight = progress_settings['phase2_weight']
-    phase3_weight = progress_settings['phase3_weight']
-    phase4_weight = progress_settings['phase4_weight']
-    progress = 0
-    if line_count > phase1_line_end:
-        progress += phase1_weight
-    else:
-        progress += phase1_weight * (line_count / phase1_line_end)
-        return progress
-    if line_count > phase2_line_end:
-        progress += phase2_weight
-    else:
-        progress += phase2_weight * ((line_count - phase1_line_end) / (phase2_line_end - phase1_line_end))
-        return progress
-    if line_count > phase3_line_end:
-        progress += phase3_weight
-    else:
-        progress += phase3_weight * ((line_count - phase2_line_end) / (phase3_line_end - phase2_line_end))
-        return progress
-    if line_count > phase4_line_end:
-        progress += phase4_weight
-    else:
-        progress += phase4_weight * ((line_count - phase3_line_end) / (phase4_line_end - phase3_line_end))
-    return progress
-
-
-def check_log_progress(jobs, running_work, progress_settings, notification_settings, view_settings,
-                       instrumentation_settings):
-    for pid, work in list(running_work.items()):
-        logging.info(f'Checking log progress for PID: {pid}')
-        if not work.log_file:
-            continue
-        f = open(work.log_file, 'r')
-        data = f.read()
-        f.close()
-
-        line_count = (data.count('\n') + 1)
-
-        progress = get_progress(line_count=line_count, progress_settings=progress_settings)
-
-        phase_times, phase_dates = get_phase_info(data, view_settings)
-        current_phase = 1
-        if phase_times:
-            current_phase = max(phase_times.keys()) + 1
-        work.phase_times = phase_times
-        work.phase_dates = phase_dates
-        work.current_phase = current_phase
-        work.progress = f'{progress:.2f}%'
-
-        if psutil.pid_exists(pid) and 'renamed final file from ' not in data.lower():
-            logging.info(f'PID still alive: {pid}')
-            continue
-
-        logging.info(f'PID no longer alive: {pid}')
-        for job in jobs:
-            if not job or not work or not work.job:
-                continue
-            if job.name != work.job.name:
-                continue
-            logging.info(f'Removing PID {pid} from job: {job.name}')
-            if pid in job.running_work:
-                job.running_work.remove(pid)
-            job.total_running -= 1
-            job.total_completed += 1
-            increment_plots_completed(increment=1, job_name=job.name, instrumentation_settings=instrumentation_settings)
-
-            send_notifications(
-                title='Plot Completed',
-                body=f'You completed a plot on {socket.gethostname()}!',
-                settings=notification_settings,
-            )
-            break
-        del running_work[pid]
+logging.info(f'Manager has exited loop because there are no more active jobs.')
