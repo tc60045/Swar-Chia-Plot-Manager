@@ -170,7 +170,8 @@ def monitor_jobs_to_start(jobs, running_work, max_concurrent, max_for_phase_1, n
             if drive in drives_free_space:
                 continue
             try:
-                free_space = psutil.disk_usage(drive).free
+                free_space = 60550733574144
+                #free_space = psutil.disk_usage(drive).free
             except:
                 logging.exception(f"Failed to get disk_usage of drive {drive}.")
                 # I need to do this because if Manager fails, I don't want it to break.
@@ -301,6 +302,8 @@ def start_work(job, chia_location, log_directory, drives_free_space):
         temporary2_directory = destination_directory
     logging.info(f'Job temporary2 directory: {temporary2_directory}')
 
+    # this is where we interject a hold and change the values below...
+
     plot_command = plots.create(
         chia_location=chia_location,
         farmer_public_key=job.farmer_public_key,
@@ -319,6 +322,9 @@ def start_work(job, chia_location, log_directory, drives_free_space):
 
     log_file = open(log_file_path, 'a')
     logging.info(f'Starting process')
+
+    # and this is the absolute last point at which we can inject.....
+    # note that we will have to change the command below
     process = start_process(args=plot_command, log_file=log_file)
     pid = process.pid
     logging.info(f'Started process: {pid}')
