@@ -182,7 +182,7 @@ def check_log_progress(jobs, running_work, progress_settings, notification_setti
         if int(progress) > 95:
             if not work.mount_assigned:
                 if assigned_mounts != "View":  #view loop uses same command; have to protect
-                    mount_index = len(drive_mounts) % len(assigned_mounts)
+                    mount_index = len(assigned_mounts) % len(drive_mounts)
                     actual_disk_path = drive_mounts[mount_index]
                     work.mount_assigned = actual_disk_path
                     assigned_mounts.append(work.mount_assigned)
@@ -200,7 +200,10 @@ def check_log_progress(jobs, running_work, progress_settings, notification_setti
                 continue
             logging.info(f'Removing PID {pid} from job: {job.name}')
             if work.destination_mount:            # pop the list when a job finishes
-                assigned_mounts.pop(0)
+                # do_rsync(word.destination_mount)       # make this happen
+                if len(assigned_mounts) > (2 * len(drive_mounts)):   #seemingly odd math, but preserves order
+                    for item in drive_mounts:
+                        assigned_mounts.pop(0)
             if pid in job.running_work:
                 job.running_work.remove(pid)
             job.total_running -= 1
