@@ -18,11 +18,11 @@ def _get_config():                              # Can we find the actual config 
     return config
 
 
-def _get_chia_location(config):                  # must know where it is
+def _get_chia_location(config):                  # Did I do this??
     return config.get('chia_location', 'chia')
 
 
-def _get_progress_settings(config):              # generics given; can be replaced by machine specifics
+def _get_progress_settings(config):              # these are for "house jobs" - will can be replaced by order specifics
     progress_setting = config['progress']
     expected_parameters = ['phase1_line_end', 'phase2_line_end', 'phase3_line_end', 'phase4_line_end', 'phase1_weight',
                            'phase2_weight', 'phase3_weight', 'phase4_weight', ]
@@ -57,8 +57,9 @@ def _get_jobs(config):                      # jobs are a horrible name collision
 def _get_chiax_location(config):                    # ADDED to accomodate our work folder
     if 'chiax' not in config:
         raise InvalidYAMLConfigException('Failed to find the log parameter in the YAML.')
-    chiax = config['chiax']
-    expected_parameters = ['folder_path']
+    chiax_config = config['chiax']
+    expected_parameters = ['torrent_host', 'torrent_port', 'torrent_peer_listen_port', 'torrent_username', \
+       'torrent_password', 'torrent_path', 'torrent_tracker1', 'redis_host', 'redis_port', 'redis_password']
     _check_parameters(parameter=chiax, expected_parameters=expected_parameters, parameter_type='chiax')
     return chiax['folder_path']
 
@@ -80,8 +81,8 @@ def _get_global_config(config):             # odd that this follows, but OK.
         raise Exception('global -> max_for_phase_1 should be a integer value.')
     if not isinstance(minimum_minutes_between_jobs, int):
         raise Exception('global -> max_concurrent should be a integer value.')
-    if not isinstance(drive_mounts, Dict):
-        raise Exception('global -> need tuple of actual drive mounts')
+    #if not isinstance(drive_mounts, Dict):
+    #    raise Exception('global -> need tuple of actual drive mounts')
     return max_concurrent, max_for_phase_1, minimum_minutes_between_jobs, drive_mounts
 
 

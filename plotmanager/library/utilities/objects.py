@@ -39,12 +39,14 @@ class Job:
     cpu_affinity = []
 
 
-class Work:
+class Work:                                  # certain we will add more to this
     work_id = None
     job = None
     pid = None
     plot_id = None
     log_file = None
+    plot_filename = None
+    order_number = None    # I think we can add this to work...
 
     temporary_drive = None
     temporary2_drive = None
@@ -55,6 +57,8 @@ class Work:
 
     datetime_start = None
     datetime_end = None
+    copytime_start = None
+    seed_start = None
 
     phase_times = {}
     total_run_time = None
@@ -65,4 +69,10 @@ class Work:
     temp_file_size = 0
     k_size = None
 
+
+class Order:
+    order_id = None
+    farmer_public_key = None
+    pool_public_key = None
+    size = None
 

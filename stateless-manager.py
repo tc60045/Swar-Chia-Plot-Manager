@@ -84,7 +84,7 @@ if minimum_minutes_between_jobs and len(running_work.keys()) > 0:
                      f'stagger. Minimum: {minimum_stagger}, Current: {next_job_work[job_name]}')
 
 logging.info(f'Starting loop.')
-while has_active_jobs_and_work(jobs):
+while has_active_jobs_and_work(jobs):           # I don't like this format, but it calls this function here
     # CHECK LOGS FOR DELETED WORK
     logging.info(f'Checking log progress..')
     check_log_progress(jobs=jobs, running_work=running_work, progress_settings=progress_settings,

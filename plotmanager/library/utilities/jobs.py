@@ -9,6 +9,7 @@ from plotmanager.library.utilities.exceptions import InvalidConfigurationSetting
 from plotmanager.library.utilities.processes import identify_drive, is_windows, start_process
 from plotmanager.library.utilities.objects import Job, Work
 from plotmanager.library.utilities.log import get_log_file_name
+from plotmanager.library.utilities.get_order import check_redis
 
 
 def has_active_jobs_and_work(jobs):
@@ -196,7 +197,7 @@ def monitor_jobs_to_start(jobs, running_work, max_concurrent, max_for_phase_1, n
 
     for i, job in enumerate(jobs):
         logging.info(f'Checking to queue work for job: {job.name}')
-        if len(running_work.values()) >= max_concurrent:
+        if len(running_work.values()) >= max_concurrent:                      # I think this belongs outside the enumerate loop...
             logging.info(f'Global concurrent limit met, skipping. Running plots: {len(running_work.values())}, '
                          f'Max global concurrent limit: {max_concurrent}')
             continue
@@ -256,7 +257,7 @@ def monitor_jobs_to_start(jobs, running_work, max_concurrent, max_for_phase_1, n
                              f'stagger. Min: {minimum_stagger}, Current: {next_job_work[j.name]}')
                 next_job_work[j.name] = minimum_stagger
 
-        job, work = start_work(
+        job, work = start_work(                               # this is where start_work is called; this whole def is called by stateless
             job=job,
             chia_location=chia_location,
             log_directory=log_directory,
@@ -269,11 +270,23 @@ def monitor_jobs_to_start(jobs, running_work, max_concurrent, max_for_phase_1, n
         next_log_check = datetime.now()
         running_work[work.pid] = work
 
-    return jobs, running_work, next_job_work, next_log_check
+    return jobs, running_work, next_job_work, next_log_check    # this goes back to stateless. 
 
 
 def start_work(job, chia_location, log_directory, drives_free_space):
-    logging.info(f'Starting new plot for job: {job.name}')
+    # TC:  so stateless calls fn above, which calls this for a new job.  Will screw up monitor if we don't let this go free
+    # so let's just make a call to redis to see if there are jobs available, and if there are, we substitute values below
+    # otherwise, this wont' get called again for 24 minutes but we will pick up the job then.
+    # 
+    # alternatively, just loop the whole thing based on what comes back from redis.  Don't start unless something is there
+    #
+    #order = dict()                     # make a declaration
+    #order = check_redis()              # this checks redis from get_order.py 
+    #if order --> we substitute keys below
+    if order:
+        logging.info(f'Starting order for job: {order['order_number']}')
+    else:
+        logging.info(f'Starting new plot for job: {job.name}')
     nice_val = job.unix_process_priority
     if is_windows():
         nice_val = job.windows_process_priority
@@ -302,32 +315,47 @@ def start_work(job, chia_location, log_directory, drives_free_space):
         temporary2_directory = destination_directory
     logging.info(f'Job temporary2 directory: {temporary2_directory}')
 
-    # this is where we interject a hold and change the values below...
-
-    plot_command = plots.create(
-        chia_location=chia_location,
-        farmer_public_key=job.farmer_public_key,
-        pool_public_key=job.pool_public_key,
-        size=job.size,
-        memory_buffer=job.memory_buffer,
-        temporary_directory=temporary_directory,
-        temporary2_directory=temporary2_directory,
-        destination_directory=destination_directory,
-        threads=job.threads,
-        buckets=job.buckets,
-        bitfield=job.bitfield,
-        exclude_final_directory=job.exclude_final_directory,
-    )
+    if order:
+        plot_command = plots.create(
+            chia_location=chia_location,
+            farmer_public_key=order['farmer_key']
+            pool_public_key=order['pool_key']
+            size=job.size,
+            memory_buffer=job.memory_buffer,
+            temporary_directory=temporary_directory,
+            temporary2_directory=temporary2_directory,
+            destination_directory=destination_directory,
+            threads=job.threads,
+            buckets=job.buckets,
+            bitfield=job.bitfield,
+            exclude_final_directory=job.exclude_final_directory,
+        )
+    else:
+        plot_command = plots.create(
+            chia_location=chia_location,
+            farmer_public_key=job.farmer_public_key,
+            pool_public_key=job.pool_public_key,
+            size=job.size,
+            memory_buffer=job.memory_buffer,
+            temporary_directory=temporary_directory,
+            temporary2_directory=temporary2_directory,
+            destination_directory=destination_directory,
+            threads=job.threads,
+            buckets=job.buckets,
+            bitfield=job.bitfield,
+            exclude_final_directory=job.exclude_final_directory,
+        )
     logging.info(f'Starting with plot command: {plot_command}')
 
     log_file = open(log_file_path, 'a')
     logging.info(f'Starting process')
 
-    # and this is the absolute last point at which we can inject.....
-    # note that we will have to change the command below
+    # I think we need to log the PID into redis so we can be sure the job is running
+    # 
     process = start_process(args=plot_command, log_file=log_file)
     pid = process.pid
     logging.info(f'Started process: {pid}')
+    # update_redis(order,pid)
 
     logging.info(f'Setting priority level: {nice_val}')
     psutil.Process(pid).nice(nice_val)
