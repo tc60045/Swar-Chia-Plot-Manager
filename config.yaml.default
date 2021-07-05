@@ -41,16 +41,17 @@ view:
   include_ram: true
   include_plot_stats: true
 
-chiax:
+xchiax:
+    unique_machine_name: 
     torrent_host: localhost
     torrent_port: 9091
     torrent_peer_listen_port: 51413
     torrent_username: 
     torrent_password:
     torrent_path: /torrents
-    torrent_tracker1: 'udp://tracker1.chiax.com:6969'
+    torrent_tracker1:  
     redis_host: localhost
-    redis_port: 6443 
+    redis_port: 6379
     redis_password: default
     #bandwidth_promise = 
     #minimum_price = 

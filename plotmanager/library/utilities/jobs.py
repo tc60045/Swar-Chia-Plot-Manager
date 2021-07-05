@@ -9,7 +9,7 @@ from plotmanager.library.utilities.exceptions import InvalidConfigurationSetting
 from plotmanager.library.utilities.processes import identify_drive, is_windows, start_process
 from plotmanager.library.utilities.objects import Job, Work
 from plotmanager.library.utilities.log import get_log_file_name
-from plotmanager.library.utilities.get_order import check_redis
+from plotmanager.library.utilities.xchiax_orders import check_for_orders, inform_of_job_start
 
 
 def has_active_jobs_and_work(jobs):
@@ -42,8 +42,8 @@ def get_target_directories(job, drives_free_space):
     return destination_directory, temporary_directory, temporary2_directory, job
 
 
-def check_valid_destinations(job, drives_free_space):
-    job_size = determine_job_size(job.size)
+def check_valid_destinations(job, drives_free_space):   # 7/2 - this is eventually going to have to go
+    job_size = determine_job_size(job.size)             # job size is deterministic, why make a function
     drives = list(drives_free_space.keys())
     destination_directories = job.destination_directory
     if not isinstance(destination_directories, list):
@@ -160,7 +160,7 @@ def determine_job_size(k_size):
 
 
 def monitor_jobs_to_start(jobs, running_work, max_concurrent, max_for_phase_1, next_job_work, chia_location,
-                          log_directory, next_log_check, minimum_minutes_between_jobs, system_drives):
+             log_directory, next_log_check, minimum_minutes_between_jobs, system_drives, xchiax_settings):
     drives_free_space = {}
     for job in jobs:
         directories = [job.destination_directory]
@@ -262,6 +262,7 @@ def monitor_jobs_to_start(jobs, running_work, max_concurrent, max_for_phase_1, n
             chia_location=chia_location,
             log_directory=log_directory,
             drives_free_space=drives_free_space,
+            xchiax_settings=xchiax_settings
         )
         jobs[i] = deepcopy(job)
         if work is None:
@@ -273,17 +274,13 @@ def monitor_jobs_to_start(jobs, running_work, max_concurrent, max_for_phase_1, n
     return jobs, running_work, next_job_work, next_log_check    # this goes back to stateless. 
 
 
-def start_work(job, chia_location, log_directory, drives_free_space):
-    # TC:  so stateless calls fn above, which calls this for a new job.  Will screw up monitor if we don't let this go free
+def start_work(job, chia_location, log_directory, drives_free_space, xchiax_settings):
+    # TC 7/3:  so stateless calls fn above, which calls this for a new job.  Will screw up monitor if we don't let this go free
     # so let's just make a call to redis to see if there are jobs available, and if there are, we substitute values below
     # otherwise, this wont' get called again for 24 minutes but we will pick up the job then.
-    # 
-    # alternatively, just loop the whole thing based on what comes back from redis.  Don't start unless something is there
-    #
-    #order = dict()                     # make a declaration
-    #order = check_redis()              # this checks redis from get_order.py 
-    #if order --> we substitute keys below
-    if order:
+    order_details = dict()
+    order_details = check_for_orders(xchiax_settings)
+    if order_details:
         logging.info(f'Starting order for job: {order['order_number']}')
     else:
         logging.info(f'Starting new plot for job: {job.name}')
@@ -315,11 +312,12 @@ def start_work(job, chia_location, log_directory, drives_free_space):
         temporary2_directory = destination_directory
     logging.info(f'Job temporary2 directory: {temporary2_directory}')
 
-    if order:
+    if order_details:
+        work.order_number = order_details['order_number']  # would do this above but fine here
         plot_command = plots.create(
             chia_location=chia_location,
-            farmer_public_key=order['farmer_key']
-            pool_public_key=order['pool_key']
+            farmer_public_key=order_details['farmer_key']
+            pool_public_key=order_details['pool_key']
             size=job.size,
             memory_buffer=job.memory_buffer,
             temporary_directory=temporary_directory,
@@ -355,8 +353,8 @@ def start_work(job, chia_location, log_directory, drives_free_space):
     process = start_process(args=plot_command, log_file=log_file)
     pid = process.pid
     logging.info(f'Started process: {pid}')
-    # update_redis(order,pid)
-
+    if order_details:
+        inform_of_job_start(xchiax_settings, work.datetime_start, work.order_number, pid) # more stateful
     logging.info(f'Setting priority level: {nice_val}')
     psutil.Process(pid).nice(nice_val)
     logging.info(f'Set priority level')

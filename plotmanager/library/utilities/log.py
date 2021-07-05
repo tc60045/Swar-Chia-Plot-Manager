@@ -28,6 +28,17 @@ def _analyze_log_end_date(contents):
         date=parsed_date,
     )
 
+def _analyze_log_get_final_file(contents):
+    match = re.search(r'Renamed final file from', contents, flags=re.I)
+    if not match:
+        return False
+    else:
+        remainder=contents[match.span()[1]:]
+        rem_lines = remainder.split('\n')
+        first_line = rem_lines[0].split('to')
+        final_filename = first[1].replace(' ','').replace('"','')
+        return(final_filename)
+
 
 def _get_date_summary(analysis):
     summary = analysis.get('summary', {})
@@ -158,7 +169,7 @@ def get_progress(line_count, progress_settings):
 
 
 def check_log_progress(jobs, running_work, progress_settings, notification_settings, view_settings,
-                       instrumentation_settings, assigned_mounts, drive_mounts):
+                       instrumentation_settings, assigned_mounts, drive_mounts, xchiax_settings):
     for pid, work in list(running_work.items()):
         logging.info(f'Checking log progress for PID: {pid}')
         if not work.log_file:
@@ -192,18 +203,26 @@ def check_log_progress(jobs, running_work, progress_settings, notification_setti
             logging.info(f'PID still alive: {pid}')
             continue
 
-        logging.info(f'PID no longer alive: {pid}')
+        logging.info(f'PID no longer alive: {pid}')  # this is where we cull the dead, need to do our thing!
+        final_filename = _analyze_log_get_final_file(data)
+        if not final_filename:
+            log (we have a problem)
+        else:                         # create a torrent
+            friendly_torrent_name = create_dot_torrent(final_filename, \
+                     work.order_number, chiax_settings)
+            # report the creation of a torrent
+            # send the actual torrent part => must wait for 20m, will handle elsewhere
+        #
+        if work.destination_mount:            # pop the list when work finishes
+            if len(assigned_mounts) > (2 * len(drive_mounts)):   #seemingly odd math, but preserves order
+                for item in drive_mounts:
+                    assigned_mounts.pop(0)
         for job in jobs:
             if not job or not work or not work.job:
                 continue
             if job.name != work.job.name:
                 continue
             logging.info(f'Removing PID {pid} from job: {job.name}')
-            if work.destination_mount:            # pop the list when a job finishes
-                # do_rsync(word.destination_mount)       # make this happen
-                if len(assigned_mounts) > (2 * len(drive_mounts)):   #seemingly odd math, but preserves order
-                    for item in drive_mounts:
-                        assigned_mounts.pop(0)
             if pid in job.running_work:
                 job.running_work.remove(pid)
             job.total_running -= 1

@@ -54,14 +54,14 @@ def _get_jobs(config):                      # jobs are a horrible name collision
     return config['jobs']
 
 
-def _get_chiax_location(config):                    # ADDED to accomodate our work folder
+def _get_chiax_settings(config):                    # ADDED to accomodate our work folder
     if 'chiax' not in config:
         raise InvalidYAMLConfigException('Failed to find the log parameter in the YAML.')
-    chiax_config = config['chiax']
+    chiax_settings = config['chiax']
     expected_parameters = ['torrent_host', 'torrent_port', 'torrent_peer_listen_port', 'torrent_username', \
        'torrent_password', 'torrent_path', 'torrent_tracker1', 'redis_host', 'redis_port', 'redis_password']
     _check_parameters(parameter=chiax, expected_parameters=expected_parameters, parameter_type='chiax')
-    return chiax['folder_path']
+    return chiax_settings
 
 
 def _get_global_config(config):             # odd that this follows, but OK.  
@@ -155,12 +155,10 @@ def get_config_info():
     log_directory = _get_log_settings(config=config)
     if not os.path.exists(log_directory):
         os.makedirs(log_directory)
-    chiax_directory = _get_chiax_location(config=config)    #ADDED to mesh with above; need to add bid stuff
-    if not os.path.exists(chiax.folder_path):
-        os.makedirs(chiax_path)
+    xchiax_settings = _get_xchiax_settings(config=config)    #ADDED to mesh with above; need to add bid stuff
     jobs = _get_jobs(config=config)
-    drive_mounts = _get_global_config(config=config)
-    max_concurrent, max_for_phase_1, minimum_minutes_between_jobs = _get_global_config(config=config)
+    max_concurrent, max_for_phase_1, minimum_minutes_between_jobs, drive_mounts = \
+        _get_global_config(config=config)
     progress_settings = _get_progress_settings(config=config)
     notification_settings = _get_notifications_settings(config=config)
     view_settings = _get_view_settings(config=config)
@@ -168,4 +166,4 @@ def get_config_info():
 
     return chia_location, log_directory, jobs, manager_check_interval, max_concurrent, max_for_phase_1, \
         minimum_minutes_between_jobs, progress_settings, notification_settings, log_level, view_settings, \
-        instrumentation_settings, drive_mounts
+        instrumentation_settings, drive_mounts, xchiax_settings

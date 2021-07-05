@@ -1,37 +1,65 @@
 import os
 import time
+import logging
 from transmission_rpc import Client
 
+from plotmanager.library.utilities.xchiax_orders import send_torrent_home
 
-def _torrent_connect():  #### BROKEN #####
-    # get host (localhost), port (9091), username, password from config
+
+def create_dot_torrent(filename, order_number, xchiax_settings):
+    logging.info(f'Creating a torrent for {order_number}...')
     c = Client(host=bittorrent_host, port=bittorrent_port, username=bittorrent_username, password=bittorrent_password)
-    return()
-
-
-def create_dot_torrent(job-or-filename):
-    #going to need to popen this / log this...
-    #use distinct order_num_piece to create friendly torrent name 
-    _torrent_connect()
-    get_config_info -- for below... 
-    friendly = torrent_path + job.order_something + '.torrent'
-    subprocess.Popen(["transmission-create", "-p", "16384", "-o", torrent_path, "--tracker", torrent_tracker1, friendly] )
+    path = xchiax_settings['torrent_path']
+    friendly_torrent_name = path + '/' +  order_number + '.torrent'
+    link_file = path + '/' + 'link_file.txt'
+    wg = open(linkfile,'a')
+    out_line = friendly_torrent_name + '|' + order_number + '|' + filename
+    wg.write(f'{out_line}\n')
+    wg.close()
+    tcreate = subprocess.Popen(["transmission-create", "-p", "16384", "-o", friendly_torrent_name, \
+       "--tracker", torrent_tracker1, filename])
     # note that this will take 20m or so to finish...
-    return()
+    # probably need to tell redis that it is available...
+    return(friendly_torrent_name)
 
 
-def add_all_torrents():          # we cannot handle state with these, so we re-add completed instead, every 15 - 30 seconds
-    path = get_config_info['torrent_path']
-    _torrent_connect()
+def add_all_torrents(xchiax_settings):          # we cannot handle state with these, so we re-add completed instead, every 15 - 30 seconds
+    logging.info(f'Adding torrents..')
+    path = xchiax_settings['torrent_path']
+    target_time = time.time() - 30
+    c = Client(host=bittorrent_host, port=bittorrent_port, username=bittorrent_username, password=bittorrent_password)
     for entry in os.scandir(path):
-    if entry.path.endswith('.torrent'):
-        if len(entry.name) == 48:
-            c.add_torrent('file://'+entry)
+        if entry.path.endswith('.torrent'):   # entry.path = fq fname
+            if len(entry.name) == 48:
+                if os.path.getmtime(entry) < target_time:
+                    tor_id = c.add_torrent('file://' + path + entry.name)
+                    c.start_torrent(tor_id)
     return()
 
-def delete_older_torrents():   #### BROKEN #####
-    path = get_config_info['torrent_path']
-    _torrent_connect()
+def find_send_new_torrents(xchiax_settings):
+    logging.info(f'Find and send new torrents..')
+    path = xchiax_settings['torrent_path']
+    torrents_sent = path + '/' + 'torrents_sent.txt'
+    f = open(torrents_sent,'r')
+    data = f.read()
+    f.close()
+    target_time = time.time() - 30
+    for entry in os.scandir(path):
+        if entry.path.endswith('.torrent'):
+            if len(entry.name) == 48:
+                if os.path.getmtime(entry) < target_time:
+                    if entry.name not in data:
+                        payload = open(entry.path,'rb').read()
+                        send_torrent_home(payload)
+                        f = open(torrents_sent,'a')
+                        f.write(f'{entry.name}\n')
+                        f.close()
+    return()    
+
+
+def delete_older_torrents(xchiax_settings):   #### BROKEN #####
+    logging.info(f'Checking for old torrents to delete')
+    path = xchiax_settings['torrent_path']
     expiration_threshold = time.time() - 3 * 24 * 60 * 60
     for entry in os.scandir(path):
         file_time = os.stat(entry.path).st_ctime
@@ -43,4 +71,8 @@ def delete_older_torrents():   #### BROKEN #####
             # execute an rm to kill the .plot file
     return()
 
-
+def do_torrent_check(xchiax_settings):
+    add_all_torrents(xchiax_settings)
+    find_send_new_torrents(xchiax_settings)
+    #delete_older_torrents(xchiax_settings)   # needs work
+    return()
